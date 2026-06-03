@@ -98,6 +98,17 @@ This repo helps you fix what you already built. If you're starting something new
 
 [FastroAI](https://fastro.ai/vibe-coders) is a production-ready full-stack template (FastAPI + Astro + Stripe + PydanticAI) built by the same team behind this checklist. Auth with CSRF and rate limiting, Stripe webhooks with signature verification and idempotency, security headers, parameterized queries, production validation that blocks deployment if your secrets are weak or debug mode is on. 90%+ test coverage. You vibe-code the product on top of it, not the foundation.
 
+<p align="center">
+  <a href="https://fastro.ai/vibe-coders">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://github.com/benavlabs/fastcrud/raw/main/docs/assets/fastroai-card-dark.png">
+      <img src="https://github.com/benavlabs/fastcrud/raw/main/docs/assets/fastroai-card-light.png" alt="FastroAI - the complete FastAPI SaaS template: auth, Stripe payments, entitlements, email, frontend and AI" width="100%">
+    </picture>
+  </a>
+</p>
+
+<p align="center"><b><a href="https://fastro.ai/vibe-coders">Start from a foundation that passes all 17 checks →</a></b></p>
+
 ## Sources
 
 Based on documented incidents and security research:
