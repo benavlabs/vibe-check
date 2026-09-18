@@ -2,7 +2,7 @@
   <img src="logo.svg" alt="vibe-check" width="35%" height="auto">
 </p>
 <p align="center" markdown=1>
-  <i>Security checklist for vibe coded apps.</i>
+  <i>Security checklist and scanner for vibe coded apps.</i>
 </p>
 <p align="center" markdown=1>
 <a href="https://github.com/benavlabs/vibe-check/blob/main/LICENSE">
@@ -26,6 +26,13 @@ Four pieces, no overlap:
 4. **`manual-checklist.md`** — Tests you run yourself for the things AI can't catch.
 
 ## Setup
+
+Clone this repo first. The commands below run from inside it:
+
+```bash
+git clone https://github.com/benavlabs/vibe-check.git
+cd vibe-check
+```
 
 ### Step 1: Copy the rules file into your project
 
@@ -55,7 +62,7 @@ python3 skills/vibe-check/scripts/check.py https://yourapp.com
 python3 skills/vibe-check/scripts/check.py https://yourapp.com --api https://api.yourapp.com/health
 ```
 
-Needs only Python 3.8+. It sends about 60–100 read-only requests (GET/HEAD/OPTIONS) and prints PASS/FAIL/WARN with a fix for each problem. Add `--json` for machine-readable output. Only scan sites you own or are authorized to test.
+Needs only Python 3.8+. It sends about 70 read-only requests (GET/HEAD/OPTIONS) per site, more with `--api`, and prints PASS/FAIL/WARN with a fix for each problem. Add `--json` for machine-readable output. Only scan sites you own or are authorized to test.
 
 Scan the deployed URL, not just localhost. Many of these problems come from your host or CDN (Vercel, Netlify, Cloudflare), not your code, so they only show up in production.
 
@@ -64,8 +71,13 @@ Scan the deployed URL, not just localhost. Many of these problems come from your
 **Claude Code:** install the skill, which bundles the audit prompt with the scanner:
 
 ```bash
-cp -r skills/vibe-check /path/to/your/project/.claude/skills/   # this project only
-cp -r skills/vibe-check ~/.claude/skills/                       # all your projects
+# this project only
+mkdir -p /path/to/your/project/.claude/skills
+cp -r skills/vibe-check /path/to/your/project/.claude/skills/
+
+# or all your projects
+mkdir -p ~/.claude/skills
+cp -r skills/vibe-check ~/.claude/skills/
 ```
 
 Then ask: `Run a vibe-check security audit on this project.`
@@ -83,7 +95,7 @@ It will investigate your codebase for each of the 17 vulnerability categories, c
 
 Open [manual-checklist.md](manual-checklist.md) and go through each test. These verify things like: can you access another user's data, is your `.env` exposed, can login be brute-forced.
 
-If you only do 5, do the first 5. They cover what took down every company on the list.
+If you only do 5, do the first 5. They cover what has taken down real vibe coded apps.
 
 ## What this covers
 
@@ -109,7 +121,7 @@ If you only do 5, do the first 5. They cover what took down every company on the
 | 16 | Weak password hashing | Medium |
 | 17 | Hallucinated packages (slopsquatting) | High |
 
-Items 1–5 are what took down every real company on this list. None required a sophisticated attack.
+Items 1–5 are what has taken down real companies. None required a sophisticated attack.
 
 > **⚠️ Warning:**
 > This will not make your app bulletproof. It covers the basics that have actually taken down vibe coded apps in production. When you have real traction and real user data, hire a pentester. No checklist replaces someone actively trying to break your stuff.
