@@ -42,17 +42,37 @@ These rules apply to all code generated in this project. They are non-negotiable
 ## Security Headers
 
 - Set these headers on ALL responses via a single global middleware:
-  - `Content-Security-Policy: default-src 'self'` (adjust as needed for your app)
+  - `Content-Security-Policy` (see CSP rules below)
   - `Strict-Transport-Security: max-age=31536000; includeSubDomains`
   - `X-Frame-Options: DENY`
   - `X-Content-Type-Options: nosniff`
   - `Referrer-Policy: strict-origin-when-cross-origin`
 - In Express, use the `helmet` package. In Next.js, set headers in next.config.js
+- If the app is served by a host or CDN (Vercel, Netlify, Cloudflare, nginx), set the same headers in that layer's config (vercel.json, netlify.toml, _headers, nginx.conf) for static files, since those responses never pass through your app middleware
+
+## Content Security Policy
+
+- A CSP header that exists is not enough. Start from this baseline and add only the origins your app actually uses:
+  `default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`
+- ALWAYS declare `default-src`. Every fetch directive that isn't declared (script-src, style-src, img-src, connect-src, font-src, frame-src, media-src) falls back to it
+- ALWAYS declare `base-uri`, `form-action`, and `frame-ancestors` explicitly. They do NOT fall back to `default-src`
+- NEVER use `'unsafe-inline'`, `'unsafe-eval'`, `*`, `data:`, `http:`, or bare `https:` in `script-src`. For inline scripts, use nonces or hashes
+- NEVER use `*` in `connect-src`, `frame-src`, or `form-action`
+- `'unsafe-inline'` is tolerated in `style-src` only (many CSS-in-JS and Tailwind setups need it)
+- Roll out a new policy as `Content-Security-Policy-Report-Only` first, fix what it reports, then switch it to enforcing
 
 ## CORS
 
 - NEVER set CORS origin to `*` (wildcard). Use an explicit allowlist of your actual domains
+- NEVER reflect the request's `Origin` header back without checking it against the allowlist
 - NEVER combine `origin: '*'` with `credentials: true`
+- Declare allowed methods explicitly (only the ones the API uses) instead of allowing all methods
+
+## CSRF
+
+- Every state-changing endpoint (POST, PUT, PATCH, DELETE) that uses cookie-based auth MUST be protected by SameSite=Lax/Strict session cookies, a CSRF token, or both
+- NEVER perform state changes on GET requests (SameSite=Lax still sends cookies on top-level GET navigations)
+- Set cookie flags on EVERY cookie that carries auth or session data, not just the main session cookie
 
 ## Rate Limiting
 
@@ -63,7 +83,7 @@ These rules apply to all code generated in this project. They are non-negotiable
 
 - Stripe webhook endpoints MUST verify the signature using `stripe.Webhook.construct_event` (or equivalent) on every request. Reject any request with an invalid or missing signature
 - Webhook handlers MUST track processed event IDs and skip duplicates (idempotency)
-- Handle the full event lifecycle: payment_intent.succeeded, invoice.payment_failed, customer.subscription.deleted, customer.subscription.past_due
+- Handle the full event lifecycle: `payment_intent.succeeded`, `invoice.payment_failed`, `customer.subscription.updated` (check `status` for `past_due` / `unpaid`), `customer.subscription.deleted`
 
 ## Error Handling
 
@@ -71,6 +91,13 @@ These rules apply to all code generated in this project. They are non-negotiable
 - Production error responses MUST return only generic messages: `{"error": "Something went wrong"}`
 - Full error details go to server-side logs only
 - Debug mode / development error pages MUST be disabled in production
+
+## Production Exposure
+
+- Disable or put behind auth these endpoints in production: API docs (FastAPI `/docs`, `/redoc`, `/openapi.json`; Swagger UI), GraphQL playgrounds/GraphiQL and introspection, Spring Boot Actuator, phpinfo, server-status, Werkzeug debugger
+- NEVER serve source maps (`.js.map`) publicly in production. Disable them in the build config (e.g. Vite `build.sourcemap: false`, Next.js `productionBrowserSourceMaps: false`) or upload them privately to your error tracker
+- NEVER let the web server serve `.env`, `.git/`, database dumps, backups, or log files. Only the build output directory is publicly served
+- Directory listing MUST be disabled on the web server and on any public bucket
 
 ## Password Hashing
 

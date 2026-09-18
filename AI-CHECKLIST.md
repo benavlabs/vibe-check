@@ -20,6 +20,8 @@ Do each category fully before moving to the next. Do not batch them.
 
 Create the `security/reports/` and `security/plans/` directories if they don't exist.
 
+**Check the deployed app too, not just the code.** Headers, CORS, and publicly served files are often decided by the host or CDN (Vercel, Netlify, Cloudflare, nginx), not by your app code. Before starting, ask the human for the production (or staging) URL. If they give one, then for categories 1, 5, 7, 8, 9, and 15, check the live responses and report any mismatch between what the code sets and what is actually served. If the vibe-check scanner is available (`scripts/check.py` in the vibe-check skill, or `skills/vibe-check/scripts/check.py` in the vibe-check repo), run `python3 check.py <url> --json` first and use its findings as evidence. Otherwise use `curl -sI` / `curl -s`. Also read hosting config files: `vercel.json`, `netlify.toml`, `_headers`, `nginx.conf`, `Caddyfile`, `firebase.json`, `wrangler.toml`.
+
 ---
 
 ## Report format
@@ -97,11 +99,15 @@ Search for patterns: `sk_live_`, `sk_test_`, `AKIA`, `password =`, `secret =`, `
 
 Check: Is .env in .gitignore? Is .env tracked by git? Are there secrets in any source file? Are any "public" env vars actually holding secret keys? Does .env.example contain real values?
 
+Also check what the web server publicly serves: Is the public/static root only the build output directory, or could it serve the project root? Are `.env`, `.git/`, `*.sql`, `*.bak`, `*.log`, `backup/` reachable over HTTP? Is directory listing enabled (nginx `autoindex`, Apache `Indexes`, Express `serve-index`, public buckets with listing)?
+
 Verification goals after fix:
 - `git ls-files .env` returns nothing
 - `grep -rn` for secret patterns across all source files returns nothing
 - No env var prefixed with NEXT_PUBLIC_, VITE_, or REACT_APP_ contains a secret key
 - .env.example exists with placeholder values only
+- `/.env`, `/.git/config`, and common backup/dump paths return 404 or 403 on the deployed app
+- Directory listing is disabled (`/uploads/`, `/static/`, `/backup/` don't return a file index)
 
 ### 2. DATABASE_ACCESS
 
@@ -148,11 +154,14 @@ Investigate: All files under src/, app/, pages/, components/, public/. All clien
 
 Check: Are any secret API keys in frontend code? Are sensitive API calls going directly from the browser to third-party services with secret credentials?
 
+Also check source maps: Does the production build emit `.js.map` files that are served publicly (Vite `build.sourcemap`, Next.js `productionBrowserSourceMaps`, webpack `devtool`)? Public source maps hand anyone your full, readable frontend source, including comments and internal API routes.
+
 Verification goals after fix:
 - No secret keys in any frontend file
 - All sensitive API calls proxy through backend routes
 - Only publishable/public keys are in client-side code
 - No public env var (NEXT_PUBLIC_*, VITE_*, REACT_APP_*) holds a secret
+- Production build does not serve `.js.map` files (requesting `<bundle>.js.map` returns 404)
 
 ### 6. SSRF
 
@@ -172,33 +181,51 @@ Verification goals after fix:
 
 Investigate: Session/cookie configuration. CSRF token implementation. SameSite cookie settings. All state-changing endpoints (POST, PUT, PATCH, DELETE).
 
-Check: Are session cookies set with SameSite=Lax or Strict? If not, are CSRF tokens required on all state-changing endpoints?
+Check: Are session cookies set with SameSite=Lax or Strict? If not, are CSRF tokens required on all state-changing endpoints? Do any GET routes change state? Check every cookie that carries auth or session data (including refresh tokens), not just the main one.
 
 Verification goals after fix:
 - Session cookies have SameSite set to Lax or Strict, OR
 - All state-changing endpoints validate a CSRF token
+- No GET route changes state
+- Every auth/session cookie has HttpOnly, Secure, and SameSite set (SameSite=None only with Secure)
 - A cross-origin form POST to any state-changing endpoint fails
 
 ### 8. SECURITY_HEADERS
 
-Investigate: Middleware configuration, response headers, framework config files (next.config.js, etc.), helmet usage.
+Investigate: Middleware configuration, response headers, framework config files (next.config.js, etc.), helmet usage, hosting/CDN config (vercel.json, netlify.toml, _headers, nginx.conf). If a deployed URL is available, fetch the real headers from both the HTML page and a static asset.
 
-Check: Are Content-Security-Policy, Strict-Transport-Security, X-Frame-Options, X-Content-Type-Options, and Referrer-Policy set on all responses?
+Check: Are Content-Security-Policy, Strict-Transport-Security, X-Frame-Options, X-Content-Type-Options, and Referrer-Policy set on all responses, including static files served by the host?
+
+Don't stop once you see a CSP header. Many apps ship a partial CSP (e.g. only `frame-ancestors 'none'`) that blocks framing but does nothing against XSS. Parse the policy and check each directive:
+- `default-src` is declared (`'self'` or `'none'`). Undeclared fetch directives (`script-src`, `style-src`, `img-src`, `connect-src`, `font-src`, `frame-src`, `media-src`) fall back to it, so without it they are unrestricted
+- `script-src` (or its `default-src` fallback) has no `'unsafe-inline'`, `'unsafe-eval'`, `*`, `data:`, `blob:`, `http:`, bare `https:`, or wildcard subdomains. Inline scripts use nonces or hashes
+- `object-src 'none'`
+- `base-uri`, `form-action`, and `frame-ancestors` are declared explicitly (they do NOT fall back to `default-src`) and none of them is `*`
+- `connect-src` and `frame-src` are not `*`
+- `style-src 'unsafe-inline'` is acceptable; `*` is not
+
+HSTS: `max-age` is at least 31536000 and includes `includeSubDomains`. Mention `preload` as optional in the report. Only recommend it if the human confirms every subdomain is HTTPS-only, because removing a domain from the preload list takes months.
 
 Verification goals after fix:
-- All five headers present on every response
-- Headers set via a single global middleware (not per-route)
+- All five headers present on every response, including static assets served by the host
+- Headers set via a single global middleware (not per-route), mirrored in hosting config for static files
+- CSP declares `default-src`, `script-src` (or safe fallback), `object-src 'none'`, `base-uri`, `form-action`, `frame-ancestors`
+- No `'unsafe-inline'` / `'unsafe-eval'` / `*` in `script-src`
+- Strict-Transport-Security has `max-age>=31536000; includeSubDomains`
+- App still works with the CSP enforced (no console CSP violations on core pages). Consider shipping as `Content-Security-Policy-Report-Only` first
 
 ### 9. CORS
 
-Investigate: CORS configuration in middleware, framework config, or server setup.
+Investigate: CORS configuration in middleware, framework config, or server setup. Also hosting/CDN config and storage buckets: static hosts and CDNs often add `Access-Control-Allow-Origin: *` on their own, even when the app code never sets it. If a deployed URL is available, check the actual response headers.
 
-Check: Is origin set to `*`? Is origin a dynamic reflection of the request? Is `credentials: true` combined with a wildcard?
+Check: Is origin set to `*`? Is origin a dynamic reflection of the request? Is `credentials: true` combined with a wildcard? Are allowed methods declared explicitly, or is every method allowed?
 
 Verification goals after fix:
 - CORS origin is an explicit allowlist of actual domains
-- No wildcard origin
+- No wildcard origin, in the app code or in the deployed response headers
+- Origin is never echoed back unless it's on the allowlist
 - credentials: true only paired with specific origins
+- Allowed methods list only what the API uses
 
 ### 10. RATE_LIMITING
 
@@ -248,7 +275,7 @@ Verification goals after fix:
 - stripe.Webhook.construct_event (or equivalent) validates signature on every request
 - Invalid or missing signatures return 400
 - Processed event IDs are stored and duplicates are skipped
-- Handlers exist for payment_intent.succeeded, invoice.payment_failed, customer.subscription.deleted
+- Handlers exist for `payment_intent.succeeded`, `invoice.payment_failed`, `customer.subscription.updated` (acting on `status: past_due` / `unpaid`), and `customer.subscription.deleted`
 
 ### 14. FILE_UPLOADS
 
@@ -270,12 +297,15 @@ Investigate: Error handling middleware. Exception handlers. Try/catch blocks. Wh
 
 Check: Do error responses expose stack traces, SQL queries, file paths, or library names? Is there a global error handler? Is debug mode off in production config?
 
+Also check debug and documentation endpoints that frameworks turn on by default: FastAPI `/docs`, `/redoc`, `/openapi.json`; Swagger UI / `api-docs`; GraphQL Playground, GraphiQL, and introspection; Spring Boot Actuator (`/actuator/env`); `phpinfo`, `/server-status`; Werkzeug debugger (which allows remote code execution); Django `DEBUG=True`; ELMAH. Are they disabled or put behind auth in production?
+
 Verification goals after fix:
 - Global error handler catches all unhandled exceptions
 - Client responses contain only generic error messages
 - Full error details logged server-side only
 - No stack traces, SQL errors, or file paths in any API response
 - Debug/development mode is off in production config
+- API docs, GraphQL playgrounds/introspection, and framework debug endpoints return 404 or require auth in production
 
 ### 16. PASSWORD_HASHING
 

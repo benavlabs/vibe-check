@@ -58,6 +58,17 @@ gitleaks detect --source . --verbose
 # PASS: No leaks found
 ```
 
+Then check that your deployed server doesn't hand these files out:
+
+```bash
+for p in .env .env.production .git/config backup.sql dump.sql uploads/ backup/ static/; do
+  echo "== /$p"; curl -s https://yourapp.com/$p | head -5
+done
+```
+
+PASS: 404/403, or your app's normal page (SPAs often return `index.html` with 200 for any path, so read the body, not just the status code).
+FAIL: You see `KEY=value` lines, `[core]` from a git config, SQL, or an "Index of /" file listing.
+
 ---
 
 ## 4. Can't access another user's data by changing an ID
@@ -85,6 +96,15 @@ Open your app in a browser. Open DevTools.
 
 PASS: No secret keys found.
 FAIL: Any match.
+
+Then check for source maps. In the Sources tab, look for your original file names (`.tsx`, `.vue`, `src/` folders) instead of only minified bundles. Or take any JS bundle URL from the Network tab and request its map:
+
+```bash
+curl -s https://yourapp.com/assets/index-abc123.js.map | head -c 100
+```
+
+PASS: 404, or not JSON.
+FAIL: Starts with `{"version":3` (your full frontend source code is public).
 
 ---
 
@@ -123,16 +143,35 @@ Replace the URL with any state-changing endpoint in your app.
 PASS: Action fails (403 or no effect).
 FAIL: The action actually executes.
 
+Also check the cookie flags. Log in, then in DevTools go to Application → Cookies and look at every session or auth cookie.
+
+PASS: Each one has HttpOnly ✓, Secure ✓, and SameSite = Lax or Strict.
+FAIL: Any auth cookie is missing one of them.
+
 ---
 
-## 8. Security headers are present
+## 8. Security headers are present and actually strict
 
 ```bash
-curl -I https://yourapp.com 2>/dev/null | grep -i "content-security-policy\|strict-transport\|x-frame-options\|x-content-type"
+curl -sI https://yourapp.com | grep -i "content-security-policy\|strict-transport\|x-frame-options\|x-content-type\|referrer-policy"
 ```
 
-PASS: All four headers present.
+PASS: All five headers present.
 FAIL: Any missing.
+
+Run it against a static asset too (e.g. a `.js` URL from the Network tab), since hosts like Vercel and Netlify serve those without going through your app.
+
+A CSP header that exists can still be useless. Read the `Content-Security-Policy` value:
+
+- `default-src` is present (`'self'` or `'none'`)
+- `script-src` (or `default-src`, if there's no `script-src`) does NOT contain `'unsafe-inline'`, `'unsafe-eval'`, or `*`
+- `object-src 'none'` is present
+- `base-uri`, `form-action`, and `frame-ancestors` are each present (they don't inherit from `default-src`)
+
+PASS: All of the above.
+FAIL: Any missing. A policy like `frame-ancestors 'none'` on its own blocks framing but does nothing against XSS.
+
+Strict-Transport-Security should have `max-age=31536000` (or higher) and `includeSubDomains`.
 
 Or go to https://securityheaders.com and enter your URL.
 
@@ -146,6 +185,8 @@ curl -I -H "Origin: https://evil.com" https://yourapp.com/api/anything 2>/dev/nu
 
 PASS: No header, or shows your specific domain only.
 FAIL: Shows `*` or echoes back `https://evil.com`.
+
+Run it against your main page (`https://yourapp.com/`) too. Static hosts and CDNs often add `Access-Control-Allow-Origin: *` without you ever writing it.
 
 ---
 
@@ -223,12 +264,23 @@ FAIL: Content renders/executes on the same origin as your app.
 
 ---
 
-## 15. Errors don't leak internals
+## 15. Errors and debug tools don't leak internals
 
 Submit deliberately bad data: invalid JSON, non-existent IDs, a single `'` character in text fields.
 
 PASS: Responses say "Something went wrong" with no technical details.
 FAIL: Response contains stack traces, SQL queries, file paths, or library names.
+
+Then check for debug and API-docs pages that frameworks enable by default (use your API's domain if it's separate):
+
+```bash
+for p in docs redoc openapi.json swagger-ui.html api-docs graphql graphiql actuator actuator/env phpinfo.php server-status console; do
+  echo "$(curl -s -o /dev/null -w '%{http_code}' https://yourapp.com/$p)  /$p"
+done
+```
+
+PASS: 404/403/401 on all of them (or your SPA's normal page).
+FAIL: Any of them shows Swagger, ReDoc, a GraphQL playground, Actuator JSON, phpinfo, or a debugger console. These hand an attacker a map of your API, and some (Actuator `/env`, Werkzeug console) hand over secrets or code execution.
 
 ---
 
