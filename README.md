@@ -18,11 +18,12 @@ AI optimizes for making your code work, not for making it safe. Carnegie Mellon 
 
 ## How it works
 
-Three layers, no overlap:
+Four pieces, no overlap:
 
 1. **`AGENTS.md`** — Security rules your AI tool reads while it writes code. Copy into your project root. Prevents vulnerabilities from being created.
-2. **`AI-CHECKLIST.md`** — A prompt that tells your AI to audit your entire project. It investigates your codebase, writes reports, creates fix plans, implements them, and verifies.
-3. **`manual-checklist.md`** — Tests you run yourself for the things AI can't catch.
+2. **`skills/vibe-check/scripts/check.py`** — A scanner that checks your running app from the outside: exposed `.env`/`.git`, public source maps, CSP and other security headers, CORS, cookie flags, debug endpoints. Read-only, no dependencies.
+3. **`AI-CHECKLIST.md`** — A prompt that tells your AI to audit your entire project. It investigates your codebase, writes reports, creates fix plans, implements them, and verifies. Also packaged as a Claude Code skill together with the scanner.
+4. **`manual-checklist.md`** — Tests you run yourself for the things AI can't catch.
 
 ## Setup
 
@@ -46,9 +47,30 @@ cp AGENTS.md /path/to/your/project/CLAUDE.md
 
 Commit it. Your AI tool reads it automatically from now on.
 
-### Step 2: Run the AI security audit
+### Step 2: Scan your live app
 
-Give [AI-CHECKLIST.md](AI-CHECKLIST.md) to your AI coding assistant:
+```bash
+python3 skills/vibe-check/scripts/check.py https://yourapp.com
+# API on another domain? Add it:
+python3 skills/vibe-check/scripts/check.py https://yourapp.com --api https://api.yourapp.com/health
+```
+
+Needs only Python 3.8+. It sends about 60–100 read-only requests (GET/HEAD/OPTIONS) and prints PASS/FAIL/WARN with a fix for each problem. Add `--json` for machine-readable output. Only scan sites you own or are authorized to test.
+
+Scan the deployed URL, not just localhost. Many of these problems come from your host or CDN (Vercel, Netlify, Cloudflare), not your code, so they only show up in production.
+
+### Step 3: Run the AI security audit
+
+**Claude Code:** install the skill, which bundles the audit prompt with the scanner:
+
+```bash
+cp -r skills/vibe-check /path/to/your/project/.claude/skills/   # this project only
+cp -r skills/vibe-check ~/.claude/skills/                       # all your projects
+```
+
+Then ask: `Run a vibe-check security audit on this project.`
+
+**Any other AI tool:** give it [AI-CHECKLIST.md](AI-CHECKLIST.md):
 
 ```
 Run the security audit defined in AI-CHECKLIST.md against this project.
@@ -57,7 +79,7 @@ Go through each vulnerability one at a time.
 
 It will investigate your codebase for each of the 17 vulnerability categories, create reports, write fix plans, implement fixes, and verify. Results go in a `security/` folder in your project.
 
-### Step 3: Run the manual checks
+### Step 4: Run the manual checks
 
 Open [manual-checklist.md](manual-checklist.md) and go through each test. These verify things like: can you access another user's data, is your `.env` exposed, can login be brute-forced.
 
@@ -71,19 +93,19 @@ If you only do 5, do the first 5. They cover what took down every company on the
 |---|--------------|----------|
 | 1 | Misconfigured database (no Row Level Security) | Critical |
 | 2 | Unprotected API routes (no auth middleware) | Critical |
-| 3 | Committed secrets (.env on GitHub) | Critical |
+| 3 | Committed or publicly served secrets (.env on GitHub or on your server) | Critical |
 | 4 | Broken access control (IDOR) | Critical |
-| 5 | Secret API keys in frontend code | Critical |
+| 5 | Secret API keys and source maps in frontend code | Critical |
 | 6 | Server-Side Request Forgery (SSRF) | High |
 | 7 | Missing CSRF protection | High |
-| 8 | Missing security headers | Medium |
+| 8 | Missing or weak security headers (incl. partial CSP) | Medium |
 | 9 | Wildcard CORS | High |
 | 10 | No rate limiting | Medium |
 | 11 | SQL injection | High |
 | 12 | Cross-site scripting (XSS) | High |
 | 13 | Unverified Stripe webhooks | High |
 | 14 | Insecure file uploads | Medium |
-| 15 | Verbose error messages | Low |
+| 15 | Verbose errors and exposed debug/API-docs endpoints | Low |
 | 16 | Weak password hashing | Medium |
 | 17 | Hallucinated packages (slopsquatting) | High |
 
@@ -122,6 +144,8 @@ Based on documented incidents and security research:
 ## Contributing
 
 Found something that should be on this list? Open a PR. Include what the vulnerability is, how to test for it, and how to fix it.
+
+If you change the scanner, run the tests: `python3 -m unittest discover tests`. If you edit `AI-CHECKLIST.md`, copy it into the skill too (`cp AI-CHECKLIST.md skills/vibe-check/references/`). A test fails if the two drift apart.
 
 ## License
 
