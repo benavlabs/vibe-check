@@ -22,7 +22,7 @@ Four pieces, no overlap:
 
 1. **`AGENTS.md`** — Security rules your AI tool reads while it writes code. Copy into your project root. Prevents vulnerabilities from being created.
 2. **`skills/vibe-check/scripts/check.py`** — A scanner that checks your running app from the outside: exposed `.env`/`.git`, public source maps, CSP and other security headers, CORS, cookie flags, debug endpoints. Read-only, no dependencies.
-3. **`AI-CHECKLIST.md`** — A prompt that tells your AI to audit your entire project. It investigates your codebase, writes reports, creates fix plans, implements them, and verifies. Also packaged as a Claude Code skill together with the scanner.
+3. **`AI-CHECKLIST.md`** — A prompt that tells your AI to audit your entire project. It investigates your codebase, writes reports, and creates fix plans. When you explicitly request fixes, it implements and verifies them. Also packaged as a Claude Code skill together with the scanner.
 4. **`manual-checklist.md`** — Tests you run yourself for the things AI can't catch.
 
 ## Setup
@@ -66,6 +66,10 @@ Needs only Python 3.8+. It sends about 70 read-only requests (GET/HEAD/OPTIONS) 
 
 Scan the deployed URL, not just localhost. Many of these problems come from your host or CDN (Vercel, Netlify, Cloudflare), not your code, so they only show up in production.
 
+The scanner restricts requests to the exact origins in the target URL and `--api` arguments, including scheme and port. Redirects and source-map URLs outside those origins are blocked. Use the final canonical URL (for example, the `www` URL if your app redirects there), and declare additional origins only when you are authorized to scan them. The HTTP-to-HTTPS check can probe the same authority over HTTP without following redirects. Blocked requests make a check incomplete rather than passing.
+
+This is a URL-scope guard, not a network sandbox: DNS resolution is not pinned, and environment proxy settings still apply. Use network isolation when scanning targets with untrusted DNS.
+
 ### Step 3: Run the AI security audit
 
 **Claude Code:** install the skill, which bundles the audit prompt with the scanner:
@@ -89,7 +93,7 @@ Run the security audit defined in AI-CHECKLIST.md against this project.
 Go through each vulnerability one at a time.
 ```
 
-It will investigate your codebase for each of the 17 vulnerability categories, create reports, write fix plans, implement fixes, and verify. Results go in a `security/` folder in your project.
+It will investigate your codebase for each of the 17 vulnerability categories, create reports, and write fix plans. It only implements fixes when you explicitly request remediation, then verifies the changes. Results go in a `security/` folder in your project; secret values must be redacted.
 
 ### Step 4: Run the manual checks
 

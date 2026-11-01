@@ -116,6 +116,9 @@ class Client:
         self.timeout = timeout
         self._lock = threading.Lock()
         self.count = 0
+        self.allowed_origins = set()
+        self.http_probe_origins = set()
+        self.blocked: List[str] = []
 
     def request(
         self,
@@ -124,9 +127,23 @@ class Client:
         headers: Optional[Dict[str, str]] = None,
         follow: bool = True,
         max_bytes: int = PROBE_BYTES,
+        http_probe: bool = False,
     ) -> Response:
+        if http_probe and follow:
+            raise ValueError("HTTP redirect probes must not follow redirects")
         chain: List[Response] = []
         for _ in range(6):
+            try:
+                origin = request_origin(url)
+                allowed = self.http_probe_origins if http_probe else self.allowed_origins
+                if origin not in allowed:
+                    raise ValueError("URL is outside the explicitly declared target origins")
+            except ValueError as e:
+                with self._lock:
+                    self.blocked.append(url)
+                r = Response(url, 0, None, b"", error=f"Blocked request: {e}")
+                chain.append(r)
+                break
             r = self._once(url, method, headers, max_bytes)
             chain.append(r)
             location = r.header("Location")
@@ -264,6 +281,19 @@ def origin_of(url: str) -> str:
     return f"{p.scheme}://{p.netloc}"
 
 
+def request_origin(url: str) -> Tuple[str, str, int]:
+    """Validate every request destination, including response-supplied URLs."""
+    if any(ord(c) < 33 or ord(c) == 127 for c in url):
+        raise ValueError("URL contains whitespace or control characters")
+    p = urllib.parse.urlsplit(url)
+    if p.scheme not in ("http", "https") or not p.hostname:
+        raise ValueError("only absolute HTTP(S) URLs are supported")
+    if p.username is not None or p.password is not None:
+        raise ValueError("credentials in URLs are not supported")
+    port = p.port if p.port is not None else (443 if p.scheme == "https" else 80)
+    return p.scheme, p.hostname.lower(), port
+
+
 def is_local_host(host: Optional[str]) -> bool:
     host = (host or "").strip("[]").lower()
     if host in ("localhost", "0.0.0.0") or host.endswith((".localhost", ".local", ".test")):
@@ -391,6 +421,11 @@ class Scanner:
         self.url = url
         self.api_urls = api_urls
         self.client = client
+        self.client.allowed_origins = {request_origin(u) for u in [url] + api_urls}
+        self.client.http_probe_origins = {
+            request_origin("http://" + urllib.parse.urlsplit(u).netloc)
+            for u in [url] + api_urls if urllib.parse.urlsplit(u).scheme == "https"
+        }
         self.local = is_local_host(urllib.parse.urlsplit(url).hostname) if local is None else local
         self.only = set(only or CATEGORIES)
         self.findings: List[Finding] = []
@@ -433,7 +468,17 @@ class Scanner:
         ]
         for key, fn in steps:
             if key in self.only:
+                blocked_before = len(self.client.blocked)
+                findings_before = len(self.findings)
                 fn()
+                if len(self.client.blocked) > blocked_before:
+                    self.findings[findings_before:] = [
+                        f for f in self.findings[findings_before:] if f.status != PASS
+                    ]
+                    self.add(key, WARN, "Check incomplete: out-of-scope request blocked",
+                             "A response referenced a URL outside the declared targets. "
+                             "No passing result is inferred from blocked requests.",
+                             fix="Confirm ownership and explicitly declare the required origin with --api.")
         return self.findings
 
     def _same_host(self, refs: List[str]) -> List[str]:
@@ -748,7 +793,7 @@ class Scanner:
         if self.local or not self.page.url.startswith("https://"):
             return
         host = urllib.parse.urlsplit(self.page.url).netloc
-        r = self.client.request(f"http://{host}/", follow=False)
+        r = self.client.request(f"http://{host}/", follow=False, http_probe=True)
         loc = r.header("Location") or ""
         if not r.ok:
             self.add(cat, PASS, "Plain HTTP is not served", f"Port 80 did not answer ({r.error}).")
@@ -950,8 +995,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = ap.parse_args(argv)
 
     url = args.url if "://" in args.url else "https://" + args.url
-    if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
-        ap.error("only http and https URLs are supported")
+    try:
+        for target in [url] + args.api:
+            request_origin(target)
+    except ValueError as e:
+        ap.error(str(e))
     only = [o.strip() for o in args.only.split(",")] if args.only else None
     if only and set(only) - set(CATEGORIES):
         ap.error("unknown category in --only: " + ", ".join(sorted(set(only) - set(CATEGORIES))))

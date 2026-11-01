@@ -13,8 +13,8 @@ For each vulnerability category below, you will:
 1. **Investigate** the codebase thoroughly. Search every file that could be related to this problem. Check configs, routes, middleware, database schemas, environment files, frontend code, package files. Do not skim. Do not assume.
 2. **Create a report** at `security/reports/{CATEGORY}_REPORT.md` documenting exactly what you found: what's vulnerable, what's safe, what's missing entirely, and severity (CRITICAL / HIGH / MEDIUM / LOW / PASS).
 3. **Create a fix plan** at `security/plans/{CATEGORY}_PLAN.md` with the specific changes needed and verification goals that prove the fix works.
-4. **Implement** the fixes.
-5. **Verify** against every goal in the plan. Update the report with results.
+4. **Implement** the fixes only when the user explicitly requests remediation. Otherwise stop at reports and proposed plans; do not change application code, dependencies, database policies, or deployment configuration.
+5. **Verify** implemented fixes against every goal in the plan. Update the report with results; mark unimplemented fixes as pending.
 
 Do each category fully before moving to the next. Do not batch them.
 
@@ -36,7 +36,7 @@ Every report should follow this structure:
 ## Findings
 
 What you found. Be specific. List every file, every route, every config that's relevant.
-Include code snippets showing the actual vulnerable code.
+Include code snippets showing the actual vulnerable code, with all credentials and secret values redacted. Never print or copy raw secrets into reports or conversation output.
 
 ## What's at risk
 
